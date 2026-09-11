@@ -59,9 +59,11 @@
     compact(v) {
       if (v == null || !isFinite(v)) return '–';
       const a = Math.abs(v), sign = v < 0 ? '-' : '';
-      if (a >= 1e12) return sign + fmt.num(a / 1e12, 2) + '조';
-      if (a >= 1e8) return sign + fmt.num(a / 1e8, 1) + '억';
-      if (a >= 1e4) return sign + fmt.num(a / 1e4, 0) + '만';
+      const pick = (div, dec, suf) => sign + fmt.num(Math.round(a / div * 10 ** dec) / 10 ** dec, dec) + suf;
+      // 반올림 결과가 상위 단위에 도달하면('10,000.0억') 상위 단위로 승격
+      if (a >= 1e12 || Math.round(a / 1e8 * 10) / 10 >= 1e4) return pick(1e12, 2, '조');
+      if (a >= 1e8 || Math.round(a / 1e4) >= 1e4) return pick(1e8, 1, '억');
+      if (a >= 1e4 || Math.round(a) >= 1e4) return pick(1e4, 0, '만');
       return sign + fmt.num(a, 0);
     }
   };
@@ -85,6 +87,19 @@
     }
     return st;
   }
+
+  /** 현재 시리즈에 없는 숨김 id 제거, 전부 숨겨졌으면 초기화 (컨트롤 변경 뒤 잘못된 빈 화면 방지) */
+  function pruneHidden(st, series) {
+    for (const id of [...st.hidden]) if (!series.some(sr => sr.id === id)) st.hidden.delete(id);
+    if (series.length && series.every(sr => st.hidden.has(sr.id))) st.hidden.clear();
+  }
+
+  // 터치 기기: 탭/드래그로 띄운 툴팁은 차트 밖을 탭할 때 닫는다 (문서 리스너는 하나만 등록)
+  let touchTip = null;
+  function registerTouchTooltip(wrap, hide) { touchTip = { wrap, hide }; }
+  document.addEventListener('pointerdown', e => {
+    if (touchTip && !touchTip.wrap.contains(e.target)) { touchTip.hide(); touchTip = null; }
+  }, true);
 
   function niceTicks(min, max, count = 5) {
     if (!(max > min)) { max = min + 1; min = min - 1; }
@@ -115,8 +130,8 @@
         if (v > max) max = v;
       }
     }
-    if (includeZero) { min = Math.min(min, 0); max = Math.max(max, 0); }
     if (min === Infinity) return null;
+    if (includeZero) { min = Math.min(min, 0); max = Math.max(max, 0); }
     if (min === max) { min -= Math.abs(min) * 0.05 || 1; max += Math.abs(max) * 0.05 || 1; }
     const pad = (max - min) * 0.06;
     return [min - pad, max + pad];
@@ -221,13 +236,13 @@
   }
 
   function toolbar(container, st, series, rerender, extra) {
-    const legend = h('div', { class: 'chart-legend', role: 'list' });
-    if (series.length >= 2) {
+    const legend = h('div', { class: 'chart-legend', role: 'group', 'aria-label': '범례 (클릭하면 숨기기/보이기)' });
+    if (series.length >= 2 || st.hidden.size) {
       const visibleCount = series.filter(sr => !st.hidden.has(sr.id)).length;
       for (const sr of series) {
         const hidden = st.hidden.has(sr.id);
         const item = h('button', {
-          class: 'legend-item' + (hidden ? ' is-hidden' : ''), type: 'button', role: 'listitem',
+          class: 'legend-item' + (hidden ? ' is-hidden' : ''), type: 'button',
           'aria-pressed': String(!hidden), title: '클릭하면 숨기기/보이기'
         }, h('span', { class: 'legend-key' + (sr.kind === 'rect' ? ' is-rect' : ''), style: `background:${colorVar(sr.color)}` }),
            h('span', { class: 'legend-name', text: sr.name }));
@@ -256,6 +271,7 @@
     container.textContent = '';
     const { dates, i0, i1 } = opts;
     const series = opts.series.filter(sr => sr && Array.isArray(sr.values));
+    pruneHidden(st, series);
     const dec = opts.decimals ?? 2;
     const yFormat = opts.yFormat || (v => fmt.num(v, dec));
     const height = opts.height || 280;
@@ -288,7 +304,7 @@
       return;
     }
 
-    const plotWrap = h('div', { class: 'chart-plot', tabindex: '0', 'aria-label': opts.ariaLabel || '시계열 차트 (←/→ 로 날짜 이동)' });
+    const plotWrap = h('div', { class: 'chart-plot', role: 'group', tabindex: '0', 'aria-label': opts.ariaLabel || '시계열 차트 (←/→ 로 날짜 이동)' });
     container.appendChild(plotWrap);
 
     const domain = domainOf(visible.map(sr => sr.values), i0, i1, !!opts.zeroLine);
@@ -398,7 +414,7 @@
           const ld = s('line', { x1: l.x + 2, y1: l.yLine.toFixed(1), x2: x1 + 8, y2: l.y.toFixed(1), class: 'leader-line' });
           gEnd.appendChild(ld);
         }
-        const dot = s('circle', { cx: l.x.toFixed(1), cy: l.yLine.toFixed(1), r: 3.5, class: 'end-dot' });
+        const dot = s('circle', { cx: l.x.toFixed(1), cy: l.yLine.toFixed(1), r: 4, class: 'end-dot' });
         dot.style.fill = colorVar(l.sr.color);
         gEnd.appendChild(dot);
         const t = s('text', { x: x1 + 10, y: l.y.toFixed(1), class: 'end-label', 'dominant-baseline': 'middle' });
@@ -453,13 +469,16 @@
       placeTooltip(tip, plotWrap, x * scale, py);
     }
     function hide() { gCross.setAttribute('visibility', 'hidden'); tip.hidden = true; curIdx = -1; }
-    overlay.addEventListener('pointermove', e => {
+    const onPointer = e => {
       const r = svg.getBoundingClientRect();
       const px = (e.clientX - r.left) * (width / r.width);
       const idx = Math.round(i0 + (px - ml) / plotW * (i1 - i0));
       showAt(idx);
-    });
-    overlay.addEventListener('pointerleave', hide);
+      if (e.pointerType === 'touch') registerTouchTooltip(plotWrap, hide);
+    };
+    overlay.addEventListener('pointermove', onPointer);
+    overlay.addEventListener('pointerdown', onPointer);
+    overlay.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') hide(); });
     plotWrap.addEventListener('keydown', e => {
       if (e.key === 'Escape') { hide(); return; }
       const stepN = e.shiftKey ? 10 : 1;
@@ -481,6 +500,7 @@
     container.textContent = '';
     const tenors = opts.tenors || [];
     const curves = (opts.curves || []).filter(c => c && Array.isArray(c.values));
+    pruneHidden(st, curves);
     const dec = opts.decimals ?? 2;
     const yFormat = opts.yFormat || (v => fmt.num(v, dec));
     const height = opts.height || 280;
@@ -504,7 +524,7 @@
       return;
     }
 
-    const plotWrap = h('div', { class: 'chart-plot', tabindex: '0', 'aria-label': opts.ariaLabel || '수익률 곡선 (←/→ 로 만기 이동)' });
+    const plotWrap = h('div', { class: 'chart-plot', role: 'group', tabindex: '0', 'aria-label': opts.ariaLabel || '수익률 곡선 (←/→ 로 만기 이동)' });
     container.appendChild(plotWrap);
     const T = tenors.length;
     const domain = T ? domainOf(visible.map(c => c.values), 0, T - 1, false) : null;
@@ -538,7 +558,7 @@
     tenors.forEach((t, k) => {
       const x = xs(k);
       gX.appendChild(s('line', { x1: x, x2: x, y1: height - mb, y2: height - mb + 4, class: 'axis-line' }));
-      if (k % labelEvery === 0 || k === T - 1) {
+      if ((T - 1 - k) % labelEvery === 0) {
         const txt = s('text', { x, y: height - mb + 15, class: 'axis-label', 'text-anchor': 'middle' });
         txt.textContent = t.label;
         gX.appendChild(txt);
@@ -598,14 +618,17 @@
       placeTooltip(tip, plotWrap, x * scale, (mt + plotH / 2) * scale);
     }
     function hide() { gCross.setAttribute('visibility', 'hidden'); tip.hidden = true; cur = -1; }
-    overlay.addEventListener('pointermove', e => {
+    const onPointer = e => {
       const r = svg.getBoundingClientRect();
       const px = (e.clientX - r.left) * (width / r.width);
       let best = 0, bd = Infinity;
       for (let k = 0; k < T; k++) { const d = Math.abs(xs(k) - px); if (d < bd) { bd = d; best = k; } }
       showAt(best);
-    });
-    overlay.addEventListener('pointerleave', hide);
+      if (e.pointerType === 'touch') registerTouchTooltip(plotWrap, hide);
+    };
+    overlay.addEventListener('pointermove', onPointer);
+    overlay.addEventListener('pointerdown', onPointer);
+    overlay.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') hide(); });
     plotWrap.addEventListener('keydown', e => {
       if (e.key === 'Escape') { hide(); return; }
       if (e.key === 'ArrowLeft') { e.preventDefault(); showAt((cur < 0 ? T - 1 : cur) - 1); }
@@ -641,11 +664,12 @@
     const rowH = 28, barH = 18;
     const labelW = Math.min(150, Math.max(...items.map(it => it.label.length)) * 12 + 12);
     const valueW = Math.max(...items.map(it => format(it.value).length)) * 7 + 12;
-    const ml = labelW, mr = 12, mt = 6, mb = 6;
-    const plotW = Math.max(60, width - ml - mr - valueW);
-    const height = mt + items.length * rowH + mb;
     let min = Math.min(0, ...items.map(it => it.value)), max = Math.max(0, ...items.map(it => it.value));
     if (min === max) max = min + 1;
+    // 값 라벨은 막대 바깥쪽에 놓이므로 음수가 있으면 왼쪽에도, 양수가 있으면 오른쪽에도 라벨 폭을 예약
+    const ml = labelW + (min < 0 ? valueW : 0), mr = 12 + (max > 0 ? valueW : 0), mt = 6, mb = 6;
+    const plotW = Math.max(60, width - ml - mr);
+    const height = mt + items.length * rowH + mb;
     const xs = v => ml + (v - min) / (max - min) * plotW;
     const x0 = xs(0);
     const svg = s('svg', { width, height, viewBox: `0 0 ${width} ${height}`, class: 'chart-svg', role: 'img' });
@@ -654,7 +678,7 @@
     const tip = makeTooltip();
     items.forEach((it, k) => {
       const y = mt + k * rowH + (rowH - barH) / 2;
-      const lbl = s('text', { x: ml - 8, y: y + barH / 2, class: 'axis-label bar-label', 'text-anchor': 'end', 'dominant-baseline': 'middle' });
+      const lbl = s('text', { x: labelW - 8, y: y + barH / 2, class: 'axis-label bar-label', 'text-anchor': 'end', 'dominant-baseline': 'middle' });
       lbl.textContent = it.label;
       svg.appendChild(lbl);
       const x1 = xs(it.value);
@@ -665,22 +689,26 @@
       let d;
       if (pos) d = `M${left} ${y}H${right - r}Q${right} ${y} ${right} ${y + r}V${y + barH - r}Q${right} ${y + barH} ${right - r} ${y + barH}H${left}Z`;
       else d = `M${right} ${y}H${left + r}Q${left} ${y} ${left} ${y + r}V${y + barH - r}Q${left} ${y + barH} ${left + r} ${y + barH}H${right}Z`;
-      const bar = s('path', { d, class: 'bar ' + (pos ? 'is-pos' : 'is-neg'), tabindex: '0' });
-      const t = s('title'); t.textContent = `${it.label}: ${format(it.value)}`; bar.appendChild(t);
+      const bar = s('path', { d, class: 'bar ' + (pos ? 'is-pos' : 'is-neg') });
       svg.appendChild(bar);
       const val = s('text', { x: pos ? right + 6 : left - 6, y: y + barH / 2, class: 'bar-value', 'text-anchor': pos ? 'start' : 'end', 'dominant-baseline': 'middle' });
       val.textContent = format(it.value);
       svg.appendChild(val);
+      // 히트 영역은 행 전체(28px 높이, 라벨~값 라벨 끝까지) — 칠해진 막대보다 크게
+      const hit = s('rect', { x: labelW, y: mt + k * rowH, width: Math.max(0, width - labelW - 12), height: rowH, fill: 'transparent', class: 'bar-hit', tabindex: '0', role: 'img' });
+      const t = s('title'); t.textContent = `${it.label}: ${format(it.value)}`; hit.appendChild(t);
       const show = () => {
+        bar.style.opacity = '0.8';
         tip.textContent = '';
         tip.appendChild(h('div', { class: 'tip-row' }, h('span', { class: 'tip-key', style: `background:${pos ? 'var(--pos)' : 'var(--neg)'}` }), h('span', { class: 'tip-val', text: format(it.value) }), h('span', { class: 'tip-name', text: it.label })));
         tip.hidden = false;
         const scale = svg.getBoundingClientRect().width / width;
         placeTooltip(tip, plotWrap, (pos ? right : left) * scale, (y + barH / 2) * scale);
       };
-      const hide = () => { tip.hidden = true; };
-      bar.addEventListener('pointerenter', show); bar.addEventListener('pointerleave', hide);
-      bar.addEventListener('focus', show); bar.addEventListener('blur', hide);
+      const hide = () => { bar.style.opacity = ''; tip.hidden = true; };
+      hit.addEventListener('pointerenter', show); hit.addEventListener('pointerleave', hide);
+      hit.addEventListener('focus', show); hit.addEventListener('blur', hide);
+      svg.appendChild(hit);
     });
     plotWrap.appendChild(svg);
     plotWrap.appendChild(tip);

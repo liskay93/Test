@@ -77,7 +77,7 @@
     const out = new Array(values.length).fill(null);
     let base = null;
     for (let i = i0; i <= i1; i++) { if (values[i] != null) { base = values[i]; break; } }
-    if (!base) return out;
+    if (base == null || base <= 0) return null; // 기준값이 0 이하이면 지수화 불가
     for (let i = i0; i <= i1; i++) out[i] = values[i] == null ? null : Math.round(values[i] / base * 10000) / 100;
     return out;
   }
@@ -113,7 +113,7 @@
   /* 상태 / 기간                                                           */
   /* ------------------------------------------------------------------ */
   const PRESETS = [['1M', 1], ['3M', 3], ['6M', 6], ['YTD', 'ytd'], ['1Y', 12], ['3Y', 36], ['5Y', 60], ['10Y', 120], ['전체', 'all']];
-  const state = { preset: '1Y', from: null, to: null, i0: 0, i1: 0 };
+  const state = { preset: '1Y', from: null, to: null, i0: 0, i1: 0, notice: '' };
   let store = null;
   const panels = [];
 
@@ -129,8 +129,12 @@
       const months = PRESETS.find(p => p[0] === state.preset)[1];
       i0 = store.indexAtOrAfter(shiftMonths(store.dates[i1], -months));
     }
-    if (i0 > i1) i0 = i1;
-    if (i0 === i1 && i1 > 0) i0 = i1 - 1;
+    const custom = !!(state.from || state.to);
+    if (i0 > i1) {
+      if (custom) state.notice = '선택한 범위에 거래일이 없어 가장 가까운 거래일로 조정했습니다.';
+      i0 = i1;
+    }
+    if (i0 === i1 && !custom && i1 > 0) i0 = i1 - 1; // 프리셋은 최소 2거래일
     state.i0 = i0; state.i1 = i1;
   }
 
@@ -152,16 +156,29 @@
     const from = document.getElementById('range-from'), to = document.getElementById('range-to');
     from.min = store.dates[0]; from.max = store.dates[store.dates.length - 1];
     to.min = store.dates[0]; to.max = store.dates[store.dates.length - 1];
+    form.setAttribute('novalidate', '');
     form.addEventListener('submit', e => {
       e.preventDefault();
-      if (!from.value && !to.value) return;
+      state.notice = '';
+      if (!from.value && !to.value) { state.notice = '시작일 또는 종료일을 입력하세요.'; updateRangeSummary(); return; }
       if (from.value && to.value && from.value > to.value) { [from.value, to.value] = [to.value, from.value]; }
+      const first = store.dates[0], last = store.dates[store.dates.length - 1];
+      const clamped = (from.value && from.value < first) || (to.value && to.value > last) || (from.value && from.value > last) || (to.value && to.value < first);
+      if (from.value && from.value < first) from.value = first;
+      if (to.value && to.value > last) to.value = last;
+      if (from.value && from.value > last) from.value = last;
+      if (to.value && to.value < first) to.value = first;
+      if (clamped) state.notice = `데이터 범위(${first} ~ ${last})로 조정했습니다.`;
       state.from = from.value || null; state.to = to.value || null;
       if (!state.from) state.preset = '전체';
       updatePresetButtons();
       renderAll();
     });
     bar.hidden = false;
+    // 스티키 필터바 높이를 CSS 변수로 노출해 앵커 이동 시 섹션 제목이 가려지지 않게 한다
+    const setBarHeight = () => document.documentElement.style.setProperty('--filter-h', bar.offsetHeight + 'px');
+    setBarHeight();
+    if (window.ResizeObserver) new ResizeObserver(setBarHeight).observe(bar);
   }
   function updatePresetButtons() {
     const custom = !!(state.from || state.to);
@@ -169,23 +186,23 @@
   }
   function updateRangeSummary() {
     const el = document.getElementById('range-summary');
-    el.textContent = `${store.dates[state.i0]} ~ ${store.dates[state.i1]} · 거래일 ${(state.i1 - state.i0 + 1).toLocaleString('ko-KR')}일`;
+    el.textContent = `${store.dates[state.i0]} ~ ${store.dates[state.i1]} · 거래일 ${(state.i1 - state.i0 + 1).toLocaleString('ko-KR')}일` + (state.notice ? ` · ${state.notice}` : '');
   }
 
   /* ------------------------------------------------------------------ */
   /* 섹션 / 패널 골격                                                       */
   /* ------------------------------------------------------------------ */
   const SECTIONS = [
-    ['kpi', '주요 지표', '최신 거래일 값과 전일 대비 변화 (금리·스프레드는 bp)'],
-    ['curve', '국채 수익률 곡선', '기간 필터의 종료일을 기준으로 과거 시점과 비교'],
+    ['kpi', '주요 지표', '최신 거래일 값과 전일 대비 변화 (금리·스프레드는 bp) — 기간 필터와 무관'],
+    ['curve', '국채 수익률 곡선', '기간 필터의 종료일(및 그 이전 시점) 기준 — 시작일은 사용하지 않음'],
     ['rates', '금리 추이', ''],
     ['policy', '정책금리', ''],
     ['credit', '크레딧', '한국 크레딧 스프레드·단기금리·크레딧 커브, 미국 OAS'],
     ['fx', '환율 · 스왑 · 헤지', ''],
     ['bei', '기대인플레이션 (BEI)', '10년 손익분기 인플레이션율'],
     ['vol', '변동성', ''],
-    ['demand', '국고채 수급', '투자자별 순매수거래대금 (단위: 원본 데이터 단위)'],
-    ['explorer', '시리즈 탐색기', '204개 전체 시리즈 중 최대 4개를 골라 비교'],
+    ['demand', '국고채 수급', '투자자별 순매수거래대금 (원본 단위 그대로 — 천원 단위로 추정, 미확인)'],
+    ['explorer', '시리즈 탐색기', '전체 {n}개 시리즈 중 최대 4개를 골라 비교'],
     ['info', '데이터 정보', '']
   ];
   const sectionBodies = new Map();
@@ -196,7 +213,7 @@
     for (const [id, title, desc] of SECTIONS) {
       const body = id === 'kpi' ? h('div', { class: 'kpi-grid', id: 'kpi-grid' }) : h('div', { class: 'grid' });
       const sec = h('section', { class: 'section', id: 'sec-' + id, 'aria-labelledby': 'h-' + id },
-        h('div', { class: 'section-head' }, h('h2', { id: 'h-' + id, text: title }), desc ? h('p', { text: desc }) : null),
+        h('div', { class: 'section-head' }, h('h2', { id: 'h-' + id, text: title }), desc ? h('p', { text: desc.replace('{n}', store.manifest.series.length.toLocaleString('ko-KR')) }) : null),
         body);
       main.appendChild(sec);
       sectionBodies.set(id, body);
@@ -263,7 +280,10 @@
     if (suf) valueEl.appendChild(h('span', { class: 'kpi-unit', text: suf }));
     row.appendChild(valueEl);
     const sparkWrap = h('div', { class: 'kpi-spark' });
-    C.sparkline(sparkWrap, l.spark || [], { width: 84, height: 26 });
+    const sp = l.spark || [];
+    const pts = [];
+    for (let k = sp.length - 1; k >= 0 && pts.length < 12; k -= 5) pts.unshift(sp[k]); // 12점(약 5거래일 간격), 마지막 점은 최신값
+    C.sparkline(sparkWrap, pts, { width: 84, height: 26 });
     row.appendChild(sparkWrap);
     tile.appendChild(row);
     if (meta.change_unit !== 'none') {
@@ -294,7 +314,7 @@
   /* ------------------------------------------------------------------ */
   const CURVE_COUNTRIES = [['KR', '한국', 'KR_KTB'], ['US', '미국', 'US_UST'], ['JP', '일본', 'JP_JGB'], ['AU', '호주', 'AU_AGB'], ['DE', '독일', 'DE_BUND']];
   const SNAPSHOTS = [
-    { key: 'now', name: '기준일', color: 1, months: 0 },
+    { key: 'now', name: '종료일', color: 1, months: 0 },
     { key: '1w', name: '1주 전', color: 2, days: -7 },
     { key: '1m', name: '1개월 전', color: 3, months: -1 },
     { key: '3m', name: '3개월 전', color: 4, months: -3 },
@@ -333,7 +353,7 @@
       snapChips.appendChild(b);
     }
     panel = addPanel('curve', {
-      title: '국채 수익률 곡선', subtitle: '만기별 수익률 (%) — 기준일은 기간 필터의 종료일', span: 12,
+      title: '국채 수익률 곡선', subtitle: '만기별 수익률 (%) — 기간 필터의 종료일과 그 이전 시점을 비교', span: 12,
       controls: [countryChips, snapChips],
       render: async body => {
         const [, cname, group] = CURVE_COUNTRIES.find(c => c[0] === cs.country);
@@ -377,6 +397,7 @@
             else if (kind === 'cum') vals = cumulative(va, state.i0, state.i1);
             else if (kind === 'index') vals = indexed(va, state.i0, state.i1);
             else continue;
+            if (!vals) continue;
             series.push({ id: d.key || (a + '_' + kind), name: d.name, color: d.color, step: d.step, dash: d.dash, values: vals });
           }
         }
@@ -455,7 +476,7 @@
     sectorSel.addEventListener('change', () => { cs.sector = sectorSel.value; cs.ratings = null; rebuildRatingChips(); renderPanel(panel); });
     ktbChip.addEventListener('click', () => { cs.showKtb = !cs.showKtb; ktbChip.setAttribute('aria-pressed', String(cs.showKtb)); renderPanel(panel); });
     panel = addPanel('credit', {
-      title: '크레딧 커브 (기준일)', subtitle: '등급별 만기 수익률 (%) — 색은 등급 순서에 고정', span: 6,
+      title: '크레딧 커브 (필터 종료일 기준)', subtitle: '등급별 만기 수익률 (%) — 색은 등급에 고정 (AAA=1번 색 … A-=7번 색)', span: 6,
       controls: [sectorSel, ratingChips, ktbChip],
       render: async body => {
         const metas = store.seriesInGroup(cs.sector).filter(m => m.tenor_years != null && cs.ratings.includes(m.rating));
@@ -466,13 +487,22 @@
         const values = await store.many(all.map(m => m.id));
         const valueAt = (meta) => { const k = all.indexOf(meta); return k < 0 ? null : window.DataStore.lastValid(values[k], state.i1)[1]; };
         const curves = [];
-        const availRatings = ratingsOf(cs.sector);
         for (const r of cs.ratings) {
-          const slot = availRatings.indexOf(r) + 1;
+          const slot = RATING_ORDER.indexOf(r) + 1; // 섹터와 무관하게 등급에 색 고정
           curves.push({ id: r, name: r, color: Math.min(8, Math.max(1, slot)), values: tenorYears.map(y => { const m = metas.find(x => x.rating === r && x.tenor_years === y); return m ? valueAt(m) : null; }) });
         }
         if (cs.showKtb) {
-          curves.push({ id: 'KTB', name: '국고채', color: 'gray', dash: true, values: tenorYears.map(y => { const m = ktbMetas.find(x => Math.abs(x.tenor_years - y) < 1e-6); return m ? valueAt(m) : null; }) });
+          // 국고채 참고선: 같은 만기가 없으면(예: 여전채 2.5년) 인접 만기 사이를 선형 보간
+          const pts = ktbMetas.map(m => [m.tenor_years, valueAt(m)]).filter(pv => pv[1] != null).sort((a, b) => a[0] - b[0]);
+          const ktbAt = y => {
+            const exact = pts.find(pv => Math.abs(pv[0] - y) < 1e-6);
+            if (exact) return exact[1];
+            let lo = null, hi = null;
+            for (const pv of pts) { if (pv[0] < y) lo = pv; else if (pv[0] > y && !hi) hi = pv; }
+            if (!lo || !hi) return null;
+            return Math.round((lo[1] + (hi[1] - lo[1]) * (y - lo[0]) / (hi[0] - lo[0])) * 1000) / 1000;
+          };
+          curves.push({ id: 'KTB', name: '국고채 (참고, 만기 불일치 시 보간)', color: 'gray', dash: true, values: tenorYears.map(ktbAt) });
         }
         C.curve(body, { tenors, curves, decimals: 2, height: 300, filename: `credit_curve_${cs.sector}`, ariaLabel: '크레딧 커브' });
       }
@@ -535,10 +565,10 @@
   /* ------------------------------------------------------------------ */
   /* 패널: 수급                                                              */
   /* ------------------------------------------------------------------ */
-  const INVESTORS = [['KTB_NETBUY_FOREIGN', '외국인'], ['KTB_NETBUY_FUND', '기금'], ['KTB_NETBUY_INSURANCE', '보험'], ['KTB_NETBUY_INVTRUST', '투신'], ['KTB_NETBUY_INDIVIDUAL', '개인'], ['KTB_NETBUY_GOVT', '정부'], ['KTB_NETBUY_TOTAL', '전체']];
+  const INVESTORS = [['KTB_NETBUY_FOREIGN', '외국인'], ['KTB_NETBUY_FUND', '기금'], ['KTB_NETBUY_INSURANCE', '보험'], ['KTB_NETBUY_INVTRUST', '투신'], ['KTB_NETBUY_INDIVIDUAL', '개인'], ['KTB_NETBUY_GOVT', '정부'], ['KTB_NETBUY_TOTAL', '전체(시장)']];
   function buildDemandPanels() {
     addPanel('demand', { title: '기간 내 투자자별 순매수 합계', subtitle: '선택 기간의 일별 순매수거래대금 합', span: 5,
-      note: '값 단위는 원본 데이터(순매수거래대금)를 그대로 따르며 억/조 표기는 원본 단위 기준입니다.',
+      note: '값은 원본(순매수거래대금)을 그대로 쓰며 억/조 표기도 원본 단위 기준입니다. 원본에 단위가 명시되지 않았고 값 크기로 볼 때 천원 단위로 추정되므로(미확인), 천원이라면 예컨대 1,112억 → 약 111조원으로 읽어야 합니다. \'전체(시장)\'은 원본이 제공하는 시장 전체 값으로 표시된 투자자들의 합과 다릅니다.',
       render: async body => {
         const items = [];
         for (const [id, label] of INVESTORS) {
@@ -598,18 +628,29 @@
         const units = new Set(metas.map(m => m.unit));
         const useIndex = es.indexMode === 'index' || (es.indexMode === 'auto' && units.size > 1);
         const series = [];
+        const notIndexable = [];
         for (const m of metas) {
           const raw = await store.series(m.id);
-          series.push({ id: m.id, name: m.name + (useIndex ? '' : ` (${m.unit_label || m.unit})`), color: es.colors.get(m.id), values: useIndex ? indexed(raw, state.i0, state.i1) : raw, step: m.group === 'POLICY' });
+          let vals = raw;
+          if (useIndex) {
+            vals = indexed(raw, state.i0, state.i1);
+            if (!vals) { notIndexable.push(m.name); continue; } // 기간 시작값이 0 이하(음의 금리·스왑레이트 등)
+          }
+          series.push({ id: m.id, name: m.name + (useIndex || !m.unit_label ? '' : ` (${m.unit_label})`), color: es.colors.get(m.id), values: vals, step: m.group === 'POLICY' });
         }
         const unit = useIndex ? 'index' : (units.size === 1 ? [...units][0] : 'price');
         const dec = useIndex ? 1 : Math.max(...metas.map(m => m.decimals ?? 2), 0);
         body.textContent = '';
         const chartEl = h('div');
         body.appendChild(chartEl);
-        if (!series.length) { chartEl.appendChild(h('div', { class: 'chart-empty', text: '시리즈를 선택하세요' })); return; }
+        if (!series.length) {
+          chartEl.appendChild(h('div', { class: 'chart-empty', text: metas.length ? '표시할 수 있는 시리즈가 없습니다' : '시리즈를 선택하세요' }));
+          if (notIndexable.length) body.appendChild(h('p', { class: 'card-note', text: `기간 시작값이 0 이하라 지수화할 수 없음: ${notIndexable.join(', ')} — '원값' 모드로 보세요.` }));
+          return;
+        }
         C.line(chartEl, { dates: store.dates, i0: state.i0, i1: state.i1, series, decimals: dec, yFormat: yFormatFor(unit, dec), zeroLine: unit === 'krw', height: 320, filename: 'explorer', ariaLabel: '시리즈 비교' });
         if (useIndex && es.indexMode === 'auto') body.appendChild(h('p', { class: 'card-note', text: '단위가 서로 다른 시리즈가 섞여 있어 기간 시작일 = 100 으로 지수화해 표시합니다.' }));
+        if (notIndexable.length) body.appendChild(h('p', { class: 'card-note', text: `기간 시작값이 0 이하라 지수화할 수 없어 표시하지 않음: ${notIndexable.join(', ')} — '원값' 모드로 보거나 같은 단위끼리 비교하세요.` }));
       } });
     panel.card.querySelector('.card-head').after(picker);
     rebuildPicker();
@@ -634,6 +675,12 @@
       add('데이터 소스 URL', h('span', { class: 'mono', text: store.base }));
       add('저장소', [h('a', { href: cfg.dataRepoUrl || '#', text: 'Data (원본·변환)' }), ' · ', h('a', { href: cfg.dashboardRepoUrl || '#', text: 'Test (대시보드)' })]);
       body.appendChild(dl);
+      const noted = m.series.filter(x => x.note);
+      if (noted.length) {
+        const det = h('details', { class: 'notes' }, h('summary', { text: `원본 데이터 주의사항 ${noted.length}건 (확인 필요)` }),
+          h('ul', {}, noted.map(x => h('li', {}, h('strong', { text: x.name }), ' — ', x.note))));
+        body.appendChild(det);
+      }
     } });
     addPanel('info', { title: '정제 내역 (quality_report.json)', subtitle: '원본 대비 결측 처리된 셀', span: 6, render: async body => {
       body.textContent = '';
@@ -649,8 +696,10 @@
       const rows = [];
       for (const z of q.zero_runs || []) rows.push([store.has(z.series) ? store.meta(z.series).name : z.series, '0값 구간', `${z.from} ~ ${z.to}`, `${z.count.toLocaleString('ko-KR')}셀`]);
       for (const o of q.outliers || []) rows.push([store.has(o.series) ? store.meta(o.series).name : o.series, '이상치', o.date, `${o.value} (주변 중앙값 ${o.neighbor_median})`]);
+      for (const z of q.stale_runs || []) rows.push([store.has(z.series) ? store.meta(z.series).name : z.series, z.action === 'kept' ? '장기 상수 구간(보존)' : '장기 상수 구간', `${z.from} ~ ${z.to}`, `${z.count.toLocaleString('ko-KR')}셀 · 값 ${z.value}${z.action === 'kept' ? ' · ' + (z.reason || '') : ''}`]);
       for (const d of q.duplicate_series || []) rows.push([d.series.map(id => store.has(id) ? store.meta(id).name : id).join(' = '), '중복(값 동일)', '전 구간', '원본 열이 동일 — 값은 그대로 둠']);
-      body.appendChild(h('p', { class: 'card-note', text: `0값 구간 ${(q.zero_runs || []).length}건 (${(q.summary?.zero_run_cells || 0).toLocaleString('ko-KR')}셀) · 이상치 ${(q.outliers || []).length}건 · 중복 시리즈 ${(q.duplicate_series || []).length}건 — 그 외 값은 원본과 동일` }));
+      const sm = q.summary || {};
+      body.appendChild(h('p', { class: 'card-note', text: `0값 구간 ${(q.zero_runs || []).length}건 (${(sm.zero_run_cells || 0).toLocaleString('ko-KR')}셀) · 이상치 ${(q.outliers || []).length}셀 · 장기 상수 구간 ${(q.stale_runs || []).length}건 (결측 ${(sm.stale_run_cells_nulled || 0).toLocaleString('ko-KR')}셀) · 중복 시리즈 ${(q.duplicate_series || []).length}건 — 그 외 값은 원본과 동일` }));
       body.appendChild(h('div', { class: 'chart-table' }, h('table', { class: 'data-table' },
         h('thead', {}, h('tr', {}, ['시리즈', '규칙', '기간/일자', '내용'].map(t => h('th', { text: t })))),
         h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', { text: c }))))))));
@@ -688,7 +737,7 @@
     }
     document.getElementById('status').remove();
     const m = store.manifest;
-    document.getElementById('asof').textContent = `기준일 ${m.dates.last} · 시리즈 ${m.series.length}개 · 산출물 생성 ${m.generated_at.replace('T', ' ').replace('Z', ' UTC')}`;
+    document.getElementById('asof').textContent = `데이터 기준일 ${m.dates.last} · 시리즈 ${m.series.length}개 · 산출물 생성 ${m.generated_at.replace('T', ' ').replace('Z', ' UTC')}`;
     document.getElementById('foot-build').textContent = `데이터 기준일 ${m.dates.last}`;
     document.title = `금리·환율·크레딧 대시보드 — ${m.dates.last}`;
 
