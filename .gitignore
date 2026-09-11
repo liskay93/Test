@@ -1,0 +1,5 @@
+# Data 저장소 output/ 이 배포 시 복사되는 위치 (로컬 개발용, 커밋하지 않음)
+/data/
+/site/
+.DS_Store
+node_modules/

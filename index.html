@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>금리·환율·크레딧 대시보드</title>
+  <meta name="description" content="Data 저장소(data_info.xlsx) 산출물을 읽어 한국·글로벌 금리, 환율, 크레딧, 수급 지표를 보여주는 대시보드">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpolyline points='5,23 12,15 18,19 27,8' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand">
+        <h1>금리·환율·크레딧 대시보드</h1>
+        <p class="sub" id="asof">데이터 불러오는 중…</p>
+      </div>
+      <nav class="site-nav" id="site-nav" aria-label="섹션 이동"></nav>
+      <div class="header-actions">
+        <button class="btn" id="theme-toggle" type="button" title="테마 전환 (시스템 / 라이트 / 다크)">테마: 시스템</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="filter-bar" id="filter-bar" hidden>
+    <div class="wrap">
+      <span class="filter-label">기간</span>
+      <div class="preset-group" id="presets" role="group" aria-label="기간 프리셋"></div>
+      <form class="custom-range" id="custom-range">
+        <label>시작 <input type="date" id="range-from" name="from"></label>
+        <label>종료 <input type="date" id="range-to" name="to"></label>
+        <button class="btn" type="submit">적용</button>
+      </form>
+      <span class="range-summary" id="range-summary"></span>
+    </div>
+  </div>
+
+  <main class="wrap" id="main">
+    <div class="status" id="status">데이터를 불러오는 중입니다…</div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>원천 데이터: <a id="link-data" href="#" rel="noopener">Data 저장소</a> (data_info.xlsx → output/)</span>
+      <span>대시보드: <a id="link-dash" href="#" rel="noopener">Test 저장소</a></span>
+      <span id="foot-build"></span>
+    </div>
+  </footer>
+
+  <script src="assets/config.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/charts.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
