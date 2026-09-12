@@ -2,8 +2,8 @@ name: Deploy dashboard to GitHub Pages
 
 # Data 저장소(liskay93/Data, 비공개)의 output/ 산출물만 가져와 대시보드와 함께 GitHub Pages 에 배포한다.
 # 필요한 설정
-#   1) 저장소 Settings → Pages → Source: "GitHub Actions"
-#   2) 저장소 Secrets → DATA_REPO_TOKEN : Data 저장소 Contents(Read) 권한이 있는 fine-grained PAT (만료일에 주의)
+#   1) 저장소 Secrets → DATA_REPO_TOKEN : Data 저장소 Contents(Read) 권한이 있는 fine-grained PAT (만료일에 주의)
+#   2) (자동) Pages 는 아래 configure-pages 스텝이 처음 실행될 때 켜진다. 실패하면 Settings → Pages → Source 를 "GitHub Actions" 로 직접 설정
 #   ※ 공개 저장소는 60일간 커밋 등 활동이 없으면 schedule 트리거가 자동 비활성화된다 (Actions 탭에서 재활성화).
 #      안정적인 자동 갱신은 Data 저장소의 TEST_REPO_TOKEN + repository_dispatch 경로를 권장.
 on:
@@ -55,6 +55,12 @@ jobs:
 
       - name: Checkout dashboard
         uses: actions/checkout@v4
+
+      # Pages 가 아직 켜져 있지 않으면 자동으로 활성화한다 (Settings → Pages 수동 설정 불필요)
+      - name: Enable GitHub Pages (if needed)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Checkout Data repository (output/ only)
         uses: actions/checkout@v4

@@ -34,12 +34,13 @@ data_info.xlsx ──build_output.py──▶ output/ ──▶ data/ (배포 �
 
 Data 저장소는 비공개이므로, 배포 워크플로가 토큰으로 Data 저장소의 `output/` 을 체크아웃해 `data/` 로 복사한 뒤 Pages 에 올립니다.
 
-1. **Settings → Pages → Build and deployment → Source: `GitHub Actions`**
-2. **Settings → Secrets and variables → Actions → New repository secret**
+1. **Settings → Secrets and variables → Actions → New repository secret**
    - 이름: `DATA_REPO_TOKEN`
    - 값: Data 저장소에 대한 *fine-grained personal access token* (Repository access: `liskay93/Data`, Permissions: `Contents: Read`)
    - 토큰 **만료일**(기본 30일)에 주의하세요. 만료되면 워크플로가 "토큰으로 Data 저장소에 접근할 수 없습니다" 오류로 실패하므로 재발급 후 Secret 을 갱신합니다.
-3. **Actions → "Deploy dashboard to GitHub Pages" → Run workflow** (또는 기본 브랜치에 push)
+2. **Actions → "Deploy dashboard to GitHub Pages" → Run workflow** (또는 기본 브랜치에 push)
+   - 워크플로가 GitHub Pages 를 자동으로 켭니다(`actions/configure-pages` `enablement: true`). 자동 활성화가 실패하면
+     Settings → Pages → Build and deployment → Source 를 `GitHub Actions` 로 직접 설정한 뒤 다시 실행하세요.
    - 배포 후 주소: `https://liskay93.github.io/Test/`
    - `github-pages` 환경의 배포 브랜치 제한이 켜져 있으면(Settings → Environments) 현재 기본 브랜치를 허용 목록에 추가하세요.
 
